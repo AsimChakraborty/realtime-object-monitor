@@ -1,0 +1,1 @@
+"""Detection domain logic: YOLO wrapper producing normalized detections."""

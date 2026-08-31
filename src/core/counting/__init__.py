@@ -1,0 +1,1 @@
+"""Counting domain logic: line-crossing track management."""

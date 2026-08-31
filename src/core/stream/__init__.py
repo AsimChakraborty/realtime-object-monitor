@@ -1,0 +1,1 @@
+"""Stream domain logic: camera capture and the per-camera worker loop."""
