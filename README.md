@@ -1,6 +1,6 @@
-# Bag Detection and Production Monitoring
+# Object Detection and Production Monitoring
 
-A local computer-vision system that detects cement bags from RTSP camera
+A local computer-vision system that detects object from RTSP camera
 streams, tracks them with YOLO ByteTrack, counts each bag as its center
 crosses a production line, records every crossing as a **production event**, and
 presents live status and analytics in a Streamlit dashboard.
