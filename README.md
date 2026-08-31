@@ -10,6 +10,7 @@ The project follows a clean separation of concerns, using a `src/` layout:
 - **`src/core/`** – pure domain logic (no UI, no direct persistence).
 - **`src/database/`** – the dedicated, clearly-visible persistence layer.
 - **`src/service/`** – application orchestration that wires core + database + logging.
+- **`src/api/`** – FastAPI REST endpoint layer exposing events, status, and reports over HTTP.
 - **`config/`** – single source of truth for settings (overridable via `.env`), kept outside `src/`.
 - **`src/utils/`** – cross-cutting helpers (logging setup).
 - **`app.py` / `dashboard.py` / `main.py`** – thin entrypoints at the project root.
@@ -24,7 +25,7 @@ data, and logs stay outside it.
 ```text
 bag_detection_system/
 ├── .env                  # local/environment config (git-ignored, see .env.example)
-├── .env.example          # documented template for .env
+├
 ├── app.py                # detection pipeline entrypoint (root)
 ├── dashboard.py          # Streamlit dashboard entrypoint (root)
 ├── main.py               # launcher (delegates to app.main)
@@ -54,6 +55,9 @@ bag_detection_system/
 │   ├── service/          # ORCHESTRATION
 │   │   ├── detection_service.py  # starts/stops camera workers
 │   │   └── status_service.py     # merges per-camera status + global summary
+│   ├── api/              # REST API LAYER (FastAPI)
+│   │   ├── __init__.py
+│   │   └── endpoint.py   # FastAPI app + routes (events, status, reports)
 │   └── utils/
 │       └── logging_setup.py  # application.log, camera.log, detection.log
 │
