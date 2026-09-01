@@ -15,8 +15,9 @@ from config.settings import (
     RECONNECT_DELAY,
     STATUS_UPDATE_INTERVAL,
 )
-from core.counting.track_manager import TrackManager
+from core.counting.track_manager import ProductionSink, TrackManager
 from core.detection.yolo_detector import YOLODetector
+from core.production.events import ProductionEvent
 from core.stream.capture import open_capture
 from core.visualization import draw_detection, draw_overlay, save_live_frame
 
@@ -58,10 +59,10 @@ class CameraContext:
         self.bag_start_number = info.get("bag_start_number", BAG_START_NUMBER)
 
 
-def build_production_sink(ctx: CameraContext):
+def build_production_sink(ctx: CameraContext) -> ProductionSink:
     """Return a callable that persists a ProductionEvent and logs it."""
 
-    def sink(event) -> None:
+    def sink(event: ProductionEvent) -> None:
         ctx.event_repository.append_event(event)
         ctx.loggers.detection.info(
             "[%s] PRODUCTION EVENT | Timestamp=%s | Line=%s | DetectionID=%s | "

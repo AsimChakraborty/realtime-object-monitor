@@ -1,9 +1,12 @@
 from __future__ import annotations
 
+import logging
+from typing import Optional
+
 import cv2
 
 
-def open_capture(url: str):
+def open_capture(url: str) -> Optional[cv2.VideoCapture]:
     """
     Open an RTSP/stream capture handle with a small buffer for low latency.
 
@@ -17,5 +20,6 @@ def open_capture(url: str):
         cap = cv2.VideoCapture(url, cv2.CAP_FFMPEG)
         cap.set(cv2.CAP_PROP_BUFFERSIZE, 2)
         return cap
-    except Exception:
+    except Exception as exc:
+        logging.warning("Failed to open capture %s: %s", url, exc)
         return None

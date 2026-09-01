@@ -3,9 +3,15 @@ from __future__ import annotations
 from pathlib import Path
 
 import cv2
+import numpy as np
 
 
-def draw_detection(frame, box, track_id, confidence):
+def draw_detection(
+    frame: np.ndarray,
+    box: np.ndarray,
+    track_id: int,
+    confidence: float,
+) -> None:
     """Draw a bounding box, center point, and label for a single detection."""
     x1, y1, x2, y2 = map(int, box)
 
@@ -27,7 +33,13 @@ def draw_detection(frame, box, track_id, confidence):
     )
 
 
-def draw_overlay(frame, line_y, camera_id, line_id, production_count):
+def draw_overlay(
+    frame: np.ndarray,
+    line_y: int,
+    camera_id: str,
+    line_id: str,
+    production_count: int,
+) -> None:
     """Draw the production line and info panel overlay on the frame."""
     height, width = frame.shape[:2]
 
@@ -75,7 +87,7 @@ def draw_overlay(frame, line_y, camera_id, line_id, production_count):
     )
 
 
-def save_live_frame(frame, path: Path):
+def save_live_frame(frame: np.ndarray, path: Path) -> None:
     """Atomically write the latest annotated frame to ``path``."""
     try:
         path.parent.mkdir(parents=True, exist_ok=True)

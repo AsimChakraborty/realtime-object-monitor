@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import os
+import warnings
 from pathlib import Path
 
 from config.loader import load_environment
@@ -320,13 +321,13 @@ STATUS_UPDATE_INTERVAL = float(
 # configuration such as DATABASE_URL.
 
 if not RTSP_URL:
-    print(
+    warnings.warn(
         "[WARNING] RTSP_URL is not configured. "
         "Camera connection will not start."
     )
 
 if not MODEL_PATH.exists():
-    print(
+    warnings.warn(
         f"[WARNING] YOLO model not found: {MODEL_PATH}"
     )
 

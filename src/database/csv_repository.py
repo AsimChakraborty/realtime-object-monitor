@@ -54,7 +54,9 @@ class CsvRepository(EventRepository, StatusRepository):
             with open(self.csv_path, "a", newline="", encoding="utf-8") as f:
                 csv.writer(f).writerow(event.to_csv_row())
 
-    def read_events(self, as_dataframe: bool = True):
+    def read_events(
+        self, as_dataframe: bool = True
+    ) -> pd.DataFrame | list[ProductionEvent]:
         if not self.csv_path.exists():
             return _empty_events_df() if as_dataframe else []
 

@@ -40,10 +40,11 @@ class YOLODetector:
 
     def load(self) -> "YOLODetector":
         """Load the YOLO weights from disk. Raises on failure."""
-        self.model = YOLO(str(self.model_path))
+        if self.model is None:
+            self.model = YOLO(str(self.model_path))
         return self
 
-    def track(self, frame):
+    def track(self, frame) -> list[dict]:
         """Run ByteTrack-backed detection on a frame and return detections."""
         if self.model is None:
             raise RuntimeError("YOLODetector.track() called before load().")

@@ -3,8 +3,6 @@ from __future__ import annotations
 import threading
 import time
 from typing import Optional
-
-from config.settings import MODEL_PATH
 from core.detection.yolo_detector import YOLODetector
 from core.stream.worker import CameraContext, WorkerLoggers, run_camera_worker
 from database.repository import EventRepository
