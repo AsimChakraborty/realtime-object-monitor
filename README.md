@@ -13,7 +13,7 @@ The project follows a clean separation of concerns, using a `src/` layout:
 - **`src/api/`** – FastAPI REST endpoint layer exposing events, status, and reports over HTTP.
 - **`config/`** – single source of truth for settings (overridable via `.env`), kept outside `src/`.
 - **`src/utils/`** – cross-cutting helpers (logging setup).
-- **`app.py` / `dashboard.py` / `main.py`** – thin entrypoints at the project root.
+- **`app.py` / `dashboard.py`** – thin entrypoints at the project root.
 
 All application/source code lives under `src/`; configuration, model weights,
 data, and logs stay outside it.
@@ -26,9 +26,8 @@ data, and logs stay outside it.
 bag_detection_system/
 ├── .env                  # local/environment config (git-ignored, see .env.example)
 ├
-├── app.py                # detection pipeline entrypoint (root)
+├── app.py                # detection pipeline + REST API entrypoint (root)
 ├── dashboard.py          # Streamlit dashboard entrypoint (root)
-├── main.py               # launcher (delegates to app.main)
 │
 ├── config/               # CONFIGURATION (outside src)
 │   ├── __init__.py       # loads .env, re-exports settings
@@ -57,9 +56,11 @@ bag_detection_system/
 │   │   └── status_service.py     # merges per-camera status + global summary
 │   ├── api/              # REST API LAYER (FastAPI)
 │   │   ├── __init__.py
-│   │   └── endpoint.py   # FastAPI app + routes (events, status, reports)
+│   │   ├── endpoint.py     # FastAPI app + routes (events, status, reports)
+│   │   ├── schemas.py      # Pydantic request/response schemas (API contract)
+│   │   └── dependencies.py # FastAPI dependency wiring (shared repositories)
 │   └── utils/
-│       └── logging_setup.py  # application.log, camera.log, detection.log
+│       └── logging_setup.py  # application.log, api.log, camera.log, detection.log
 │
 ├── data/                 # generated CSV, status JSON, latest annotated frame (outside src)
 ├── model/
@@ -210,7 +211,8 @@ Start the detection pipeline first:
 python app.py
 ```
 
-(`python main.py` is an alias that runs the same pipeline.)
+This starts the detection pipeline **and** the REST API together
+(API on `API_HOST:API_PORT`, interactive docs at `/docs`).
 
 In a second terminal with the same environment activated, start the dashboard:
 

@@ -161,7 +161,7 @@ if page == "Live Monitor":
     camera_items = list(cameras_status.items())
 
     if not camera_items:
-        st.info("Start main.py to populate camera status.")
+        st.info("Start app.py to populate camera status.")
     else:
         cols = st.columns(min(3, len(camera_items)))
 

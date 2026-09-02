@@ -295,6 +295,33 @@ DEFAULT_CAMERA_ID = os.getenv(
 
 
 # ============================================================
+# REST API settings
+# ============================================================
+
+API_HOST = os.getenv(
+    "API_HOST",
+    "127.0.0.1",
+).strip()
+
+API_PORT = int(
+    os.getenv(
+        "API_PORT",
+        "8000",
+    )
+)
+
+API_VERSION = os.getenv(
+    "API_VERSION",
+    "1.0.0",
+).strip()
+
+API_LOG = resolve_path(
+    os.getenv("API_LOG"),
+    LOGS_DIR / "api.log",
+)
+
+
+# ============================================================
 # Watchdog settings
 # ============================================================
 

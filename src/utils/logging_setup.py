@@ -6,6 +6,7 @@ from pathlib import Path
 
 from config.settings import (
     APPLICATION_LOG,
+    API_LOG,
     CAMERA_LOG,
     DETECTION_LOG,
     LOG_BACKUP_COUNT,
@@ -52,11 +53,12 @@ def setup_logging() -> dict:
     Configure the three dedicated log files and return the loggers.
 
     Returns:
-        Dict with keys ``app`` (application.log), ``camera`` (camera.log) and
-        ``detection`` (detection.log).
+        Dict with keys ``app`` (application.log), ``api`` (api.log),
+        ``camera`` (camera.log) and ``detection`` (detection.log).
     """
     return {
         "app": _configure("application", APPLICATION_LOG),
+        "api": _configure("api", API_LOG),
         "camera": _configure("camera", CAMERA_LOG),
         "detection": _configure("detection", DETECTION_LOG),
     }
