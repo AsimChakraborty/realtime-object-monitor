@@ -234,6 +234,7 @@ elif page == "Production Events":
 
         with col4:
             search_bag = st.text_input("Search BagNo")
+            exact_match = st.checkbox("Exact match", value=True)
 
         filtered = events.copy()
 
@@ -250,10 +251,19 @@ elif page == "Production Events":
                 filtered["Direction"].astype(str).isin(selected_directions)
             ]
 
-        if search_bag:
-            filtered = filtered[
-                filtered["BagNo"].astype(str).str.contains(search_bag, na=False)
-            ]
+        if search_bag.strip():
+            if exact_match:
+                search_num = pd.to_numeric(search_bag, errors="coerce")
+                if pd.notna(search_num):
+                    filtered = filtered[filtered["BagNo"] == search_num]
+                else:
+                    filtered = filtered[
+                        filtered["BagNo"].astype(str) == search_bag.strip()
+                    ]
+            else:
+                filtered = filtered[
+                    filtered["BagNo"].astype(str).str.contains(search_bag, na=False)
+                ]
 
         st.metric("Matching Production Events", len(filtered))
 
