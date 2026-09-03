@@ -1,9 +1,20 @@
 # Object Detection and Production Monitoring
 
-A local computer-vision system that detects object from RTSP camera
-streams, tracks them with YOLO ByteTrack, counts each bag as its center
-crosses a production line, records every crossing as a **production event**, and
-presents live status and analytics in a Streamlit dashboard.
+A local computer-vision system that detects objects from an RTSP camera
+stream **or an uploaded recorded video**, tracks them with YOLO ByteTrack,
+counts each bag as its center crosses a production line, records every
+crossing as a **production event**, and presents live status and analytics in
+a Streamlit dashboard.
+
+When the dashboard starts, the user chooses the **Video Source** in the
+sidebar:
+
+- **Connect an RTSP Camera** – live detection from the RTSP stream (pipeline
+  runs in `app.py`; the dashboard monitors it).
+- **Upload a Recorded Video** – the uploaded file is processed by the
+  *exact same* detection / verification pipeline (YOLO → ByteTrack →
+  counting line → production events), with all events tagged under the
+  dedicated Camera ID `CAM_VIDEO`.
 
 The project follows a clean separation of concerns, using a `src/` layout:
 
@@ -26,8 +37,9 @@ data, and logs stay outside it.
 bag_detection_system/
 ├── .env                  # local/environment config (git-ignored, see .env.example)
 ├
-├── app.py                # detection pipeline + REST API entrypoint (root)
-├── dashboard.py          # Streamlit dashboard entrypoint (root)
+├── app.py                # detection pipeline + REST API entrypoint (root, RTSP cameras)
+├── dashboard.py          # Streamlit dashboard entrypoint (root): source selection
+│                         #   (RTSP Camera / Upload Recorded Video) + monitoring
 │
 ├── config/               # CONFIGURATION (outside src)
 │   ├── __init__.py       # loads .env, re-exports settings
@@ -37,8 +49,13 @@ bag_detection_system/
 ├── src/                  # ALL APPLICATION/SOURCE CODE
 │   ├── core/             # DOMAIN LOGIC (UI- and storage-agnostic)
 │   │   ├── stream/
-│   │   │   ├── capture.py    # open RTSP capture handle
+│   │   │   ├── capture.py    # open RTSP capture handle (also opens video files)
 │   │   │   └── worker.py     # per-camera threaded processing loop
+│   │   │                     #   run_camera_worker          -> live RTSP stream
+│   │   │                     #   run_uploaded_video_worker  -> uploaded video
+│   │   │                     #     (both share the SAME detection/verification
+│   │   │                     #      pipeline: YOLODetector, TrackManager,
+│   │   │                     #      production sink, visualization, status)
 │   │   ├── detection/
 │   │   │   └── yolo_detector.py  # YOLO + ByteTrack wrapper -> normalized detections
 │   │   ├── counting/
@@ -62,7 +79,8 @@ bag_detection_system/
 │   └── utils/
 │       └── logging_setup.py  # application.log, api.log, camera.log, detection.log
 │
-├── data/                 # generated CSV, status JSON, latest annotated frame (outside src)
+├── data/                 # generated CSV, status JSON, latest annotated frame,
+│   │                     #   and uploaded videos (data/uploads/) (outside src)
 ├── model/
 │   └── bag.pt            # required custom YOLO weights (add locally, outside src)
 ├── logs/                 # runtime logs (application, camera, detection) (outside src)
@@ -76,9 +94,11 @@ bag_detection_system/
 ## How the layers connect
 
 ```text
- stream worker (src/core/stream)
-        │  reads frames
-        ▼
+ stream worker (src/core/stream)                 uploaded video (dashboard.py)
+   run_camera_worker (RTSP)                        run_uploaded_video_worker
+         |  reads frames                                  |  reads frames
+         +----------------+-------------------------------+
+                          v
  YOLODetector (src/core/detection) ──normalized detections──► TrackManager (src/core/counting)
                                                                   │
                                              counts line crossings, issues ProductionEvent
@@ -88,6 +108,13 @@ bag_detection_system/
                                                                   ▼
                               data/production_events.csv  ←── read by dashboard
 ```
+
+Both the live RTSP stream and an uploaded recorded video go through the
+**exact same** pipeline (`YOLODetector` → `TrackManager` line-crossing
+verification → `production_sink` → `EventRepository`). The only differences:
+uploaded videos are read from a local file instead of the RTSP socket, they run
+in a dashboard background thread, they stop at end-of-file (no reconnection
+loop), and their events/status are tagged with Camera ID `CAM_VIDEO`.
 
 - **Core** modules never call `database` or Streamlit directly. `TrackManager`
   emits a `ProductionEvent` through an injected *sink*; the worker wires that
@@ -225,15 +252,50 @@ Streamlit prints the local URL, typically `http://localhost:8501`.
 Press `Ctrl+C` in the pipeline terminal to stop it; the pipeline marks active
 cameras offline.
 
+### Using an uploaded video (no RTSP camera required)
+
+The dashboard can also process a recorded video **without** running
+`app.py` — the dashboard spins up the same pipeline itself:
+
+```powershell
+streamlit run dashboard.py
+```
+
+1. In the sidebar under **Video Source**, choose **Upload a Recorded Video**.
+2. Upload a video file (`mp4`, `avi`, `mov`, `mkv`, `wmv`). It is saved to
+   `data/uploads/`.
+3. Click **▶ Start Processing** — the video runs through the same
+   detection → tracking → counting-line → production-event pipeline in a
+   background thread (Stop Processing can interrupt it early).
+4. The processed annotated frame and production events appear on the page and
+   in the usual `Production Events` / `Reports & Analytics` pages.
+
+> **Note:** selecting *Upload a Recorded Video* does **not** stop the RTSP
+> camera. Both run independently with separate Camera IDs (`CAM-01` for RTSP,
+> `CAM_VIDEO` for uploads). If both run at the same time on CPU, each YOLO
+> instance shares the processor, so expect lower FPS in the live stream while
+> a video is being processed.
+
 ---
 
 ## Dashboard pages
 
+When the dashboard starts, the sidebar shows a **Video Source** selector:
+
+- **Connect an RTSP Camera** – the original live monitor (unchanged).
+- **Upload a Recorded Video** – upload UI + live processing feedback, using the
+  same pipeline as RTSP (see *Using an uploaded video* above).
+
+The pages below are shared by both sources:
+
 - **Live Monitor** – configured/online camera counts, active bags, bags produced
   today, total production, per-camera status (FPS, counts, heartbeat), the latest
   processed frame, and recent production events. Optional auto-refresh.
+  In *Upload* mode this page shows the upload UI, the latest annotated frame
+  from the video, and recent events (including `CAM_VIDEO` events).
 - **Production Events** – searchable/filterable event history (period, camera,
-  direction, BagNo) with CSV download.
+  direction, BagNo) with CSV download. Filter by `Camera ID` to separate RTSP
+  (`CAM-01`) from uploaded-video (`CAM_VIDEO`) events.
 - **Reports & Analytics** – period-filtered totals, daily production bars,
   production by shift, and production by camera.
 
@@ -257,8 +319,11 @@ The pipeline creates these outputs on demand:
   | `Production Batch` | Active batch |
 
 - `data/status.json` – per-camera `cameras` object (online, active count,
-  production count, FPS, heartbeat, message) plus a global `summary`.
+  production count, FPS, heartbeat, message) plus a global `summary`. RTSP
+  cameras appear under their configured `camera_id` (e.g. `CAM-01`);
+  uploaded-video processing appears under `CAM_VIDEO`.
 - `data/live_frame.jpg` – the latest annotated frame.
+- `data/uploads/` – uploaded video files saved by the dashboard.
 
 ---
 
@@ -273,6 +338,13 @@ The pipeline creates these outputs on demand:
 - Reconnection behaviour: if a stream cannot be opened or repeatedly fails to
   return frames, the camera is marked offline and the worker retries after
   `RECONNECT_DELAY`.
+- Uploaded-video processing runs the same pipeline but reads from a local
+  file: it stops at end-of-video (or when **Stop Processing** is clicked) and
+  has no reconnection loop. All its events/status use Camera ID `CAM_VIDEO`.
+- The RTSP camera and uploaded-video processing are independent: selecting
+  *Upload a Recorded Video* in the dashboard does not stop the RTSP camera.
+  However, running both simultaneously on CPU shares the processor between
+  two YOLO instances, which can reduce live-stream FPS.
 
 ## Troubleshooting
 

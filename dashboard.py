@@ -11,6 +11,7 @@ for _path in (str(_PROJECT_ROOT), str(_SRC_DIR)):
     if _path not in sys.path:
         sys.path.insert(0, _path)
 
+import threading
 import time
 from datetime import date, datetime, timedelta
 
@@ -21,10 +22,19 @@ import streamlit as st
 from config.settings import (
     AUTO_REFRESH_SECONDS,
     CAMERAS,
+    DATA_DIR,
     LIVE_FRAME_PATH,
     MODEL_PATH,
 )
+from src.core.detection.yolo_detector import YOLODetector
+from src.core.stream.worker import (
+    CameraContext,
+    WorkerLoggers,
+    run_uploaded_video_worker,
+)
 from src.database.connection import DatabaseConnection
+from src.service.status_service import StatusService
+from src.utils.logging_setup import setup_logging
 
 # Resolve the shared persistence layer (same store written by `app.py`).
 _connection = DatabaseConnection.from_settings()
@@ -32,7 +42,7 @@ _event_repo = _connection.event_repository()
 _status_repo = _connection.status_repository()
 
 st.set_page_config(
-    page_title="Cement Bag Production Monitor",
+    page_title="Bag Production Monitor",
     layout="wide",
 )
 
@@ -112,6 +122,142 @@ def effective_camera_status(camera: dict) -> bool:
         return False
 
 
+# ============================================================
+# UPLOADED VIDEO PROCESSING (Streamlit UI)
+# ------------------------------------------------------------
+# The uploaded video is processed by the SAME pipeline used for
+# the RTSP camera (see comments in src/core/stream/worker.py):
+#
+#   * YOLODetector (config.settings.MODEL_PATH)   -> detection
+#   * CameraContext + build_production_sink       -> same event
+#                                                    persistence as RTSP
+#   * run_uploaded_video_worker()                 -> same TrackManager
+#                                                    (ByteTrack + counting
+#                                                    line), same overlay
+#                                                    and status reporting
+#
+# The RTSP Live Monitor code below is NOT changed.
+# ============================================================
+
+UPLOAD_DIR = DATA_DIR / "uploads"
+
+
+def _get_video_pipeline():
+    """Create (once per session) the shared detection pipeline for uploads."""
+    if "video_pipeline_ctx" in st.session_state:
+        return st.session_state["video_pipeline_ctx"]
+
+    loggers = setup_logging()
+    connection = DatabaseConnection.from_settings()
+    event_repo = connection.event_repository()
+    event_repo.ensure_initialized()
+
+    detector = YOLODetector(MODEL_PATH)
+    detector.load()
+
+    # Use the SAME pipeline configuration as the RTSP camera, but tag all
+    # uploaded-video events/status with a dedicated Camera ID: "CAM_VIDEO"
+    # (instead of the RTSP camera's "CAM-01"). Only this copied dict is
+    # modified - the RTSP CAMERAS config itself is untouched.
+    video_camera_info = {**CAMERAS[0], "camera_id": "CAM_VIDEO"}
+
+    ctx = CameraContext(
+        camera_info=video_camera_info,
+        detector=detector,
+        status_service=StatusService(connection.status_repository()),
+        event_repository=event_repo,
+        loggers=WorkerLoggers(
+            app=loggers["app"],
+            camera=loggers["camera"],
+            detection=loggers["detection"],
+        ),
+    )
+
+    st.session_state["video_pipeline_ctx"] = ctx
+    return ctx
+
+
+def _start_video_processing(video_path: str) -> None:
+    """Run the uploaded video through the RTSP pipeline in a background thread."""
+    ctx = _get_video_pipeline()
+    stop_event = threading.Event()
+    st.session_state["video_stop_event"] = stop_event
+
+    thread = threading.Thread(
+        target=run_uploaded_video_worker,
+        args=(ctx, video_path, stop_event),
+        daemon=True,
+        name="UploadedVideo-Worker",
+    )
+    thread.start()
+    st.session_state["video_processing"] = video_path
+
+
+def _render_uploaded_video_page(events: pd.DataFrame) -> None:
+    """Upload UI + live processing feedback (mirrors the RTSP monitor)."""
+    st.title("📼 Uploaded Video Processing")
+    if "video_processing" not in st.session_state:
+        st.session_state["video_processing"] = None
+
+    st.subheader("1. Upload a recorded video")
+    uploaded = st.file_uploader(
+        "Choose a video file",
+        type=["mp4", "avi", "mov", "mkv", "wmv"],
+    )
+
+    if uploaded is not None:
+        UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
+        save_path = UPLOAD_DIR / uploaded.name
+        if not save_path.exists():
+            save_path.write_bytes(uploaded.getbuffer())
+
+        st.success(f"Saved: {save_path}")
+
+        col_start, col_stop, col_status = st.columns(3)
+
+        with col_start:
+            if st.button(
+                "▶ Start Processing",
+                disabled=st.session_state["video_processing"] is not None,
+            ):
+                _start_video_processing(str(save_path))
+                st.rerun()
+
+        with col_stop:
+            if st.button(
+                "⏹ Stop Processing",
+                disabled=st.session_state["video_processing"] is None,
+            ):
+                stop_event = st.session_state.get("video_stop_event")
+                if stop_event is not None:
+                    stop_event.set()
+                st.session_state["video_processing"] = None
+
+        with col_status:
+            if st.session_state["video_processing"] is not None:
+                st.info("Processing...")
+            else:
+                st.write("Idle")
+
+    st.markdown("---")
+    st.subheader("2. Latest Processed Frame")
+
+    # Same annotated frame output written by the shared pipeline.
+    if LIVE_FRAME_PATH.exists():
+        st.image(str(LIVE_FRAME_PATH), caption="Latest processed frame")
+    else:
+        st.info("No frame processed yet.")
+
+    st.markdown("---")
+    st.subheader("3. Recent Production Events")
+
+    # Same event repository as the RTSP camera.
+    if events.empty:
+        st.info("No production events available.")
+    else:
+        st.dataframe(events.head(15), width="stretch", hide_index=True)
+
+
 st.sidebar.title("Bag Production")
 page = st.sidebar.radio(
     "Navigation",
@@ -120,6 +266,11 @@ page = st.sidebar.radio(
 
 auto_refresh = st.sidebar.checkbox(
     f"Auto Refresh ({AUTO_REFRESH_SECONDS}s)", value=True
+)
+
+source_mode = st.sidebar.radio(
+    "Video Source",
+    ["Connect an RTSP Camera", "Upload a Recorded Video"],
 )
 
 st.sidebar.markdown("---")
@@ -136,68 +287,77 @@ status = load_status()
 if page == "Live Monitor":
     st.title("Bag Production Monitor")
 
-    cameras_status = status.get("cameras", {})
-
-    online = 0
-    active = 0
-
-    for data in cameras_status.values():
-        is_online = data.get("online", False) and effective_camera_status(data)
-        if is_online:
-            online += 1
-        active += data.get("current_count", 0)
-
-    today_events = filter_period(events, "Today")
-
-    col1, col2, col3, col4 = st.columns(4)
-    col1.metric("Cameras Online", f"{online} / {len(CAMERAS)}")
-    col2.metric("Active Bags", active)
-    col3.metric("Bags Produced Today", len(today_events))
-    col4.metric("Total Production", len(events))
-
-    st.markdown("---")
-    st.subheader("📷 Camera Status")
-
-    camera_items = list(cameras_status.items())
-
-    if not camera_items:
-        st.info("Start app.py to populate camera status.")
+    # ============================================================
+    # SOURCE SELECTION BRANCHES
+    # - "Upload a Recorded Video" -> same pipeline, file input
+    # - "Connect an RTSP Camera"  -> original live monitor (unchanged)
+    # ============================================================
+    if source_mode == "Upload a Recorded Video":
+        _render_uploaded_video_page(events)
+    # ---- Original RTSP live monitor (unchanged, re-indented) ----
     else:
-        cols = st.columns(min(3, len(camera_items)))
+        cameras_status = status.get("cameras", {})
 
-        for i, (camera_id, data) in enumerate(camera_items):
-            with cols[i % len(cols)]:
-                is_online = data.get("online", False) and effective_camera_status(data)
-                icon = "🟢" if is_online else "🔴"
+        online = 0
+        active = 0
 
-                with st.container(border=True):
-                    st.markdown(f"### {icon} {camera_id}")
-                    st.write(f"**Line:** {data.get('line_id', '-')}")
-                    st.metric("Active Bags", data.get("current_count", 0))
-                    st.metric("Production Count", data.get("production_count", 0))
-                    st.write(f"**FPS:** {data.get('fps', 0):.1f}")
-                    st.write(f"**Status:** {'ONLINE' if is_online else 'OFFLINE'}")
-                    st.caption(data.get("message", ""))
+        for data in cameras_status.values():
+            is_online = data.get("online", False) and effective_camera_status(data)
+            if is_online:
+                online += 1
+            active += data.get("current_count", 0)
 
-    st.markdown("---")
-    st.subheader("🎥 Latest Processed Frame")
+        today_events = filter_period(events, "Today")
 
-    if LIVE_FRAME_PATH.exists():
-        st.image(str(LIVE_FRAME_PATH), caption="Live processed frame")
-    else:
-        st.info("No live frame available yet.")
+        col1, col2, col3, col4 = st.columns(4)
+        col1.metric("Cameras Online", f"{online} / {len(CAMERAS)}")
+        col2.metric("Active Bags", active)
+        col3.metric("Bags Produced Today", len(today_events))
+        col4.metric("Total Production", len(events))
 
-    st.markdown("---")
-    st.subheader("🕒 Recent Production Events")
+        st.markdown("---")
+        st.subheader("📷 Camera Status")
 
-    if events.empty:
-        st.info("No production events available.")
-    else:
-        st.dataframe(events.head(15), width="stretch", hide_index=True)
+        camera_items = list(cameras_status.items())
 
-    if auto_refresh:
-        time.sleep(AUTO_REFRESH_SECONDS)
-        st.rerun()
+        if not camera_items:
+            st.info("Start app.py to populate camera status.")
+        else:
+            cols = st.columns(min(3, len(camera_items)))
+
+            for i, (camera_id, data) in enumerate(camera_items):
+                with cols[i % len(cols)]:
+                    is_online = data.get("online", False) and effective_camera_status(data)
+                    icon = "🟢" if is_online else "🔴"
+
+                    with st.container(border=True):
+                        st.markdown(f"### {icon} {camera_id}")
+                        st.write(f"**Line:** {data.get('line_id', '-')}")
+                        st.metric("Active Bags", data.get("current_count", 0))
+                        st.metric("Production Count", data.get("production_count", 0))
+                        st.write(f"**FPS:** {data.get('fps', 0):.1f}")
+                        st.write(f"**Status:** {'ONLINE' if is_online else 'OFFLINE'}")
+                        st.caption(data.get("message", ""))
+
+        st.markdown("---")
+        st.subheader("🎥 Latest Processed Frame")
+
+        if LIVE_FRAME_PATH.exists():
+            st.image(str(LIVE_FRAME_PATH), caption="Live processed frame")
+        else:
+            st.info("No live frame available yet.")
+
+        st.markdown("---")
+        st.subheader("🕒 Recent Production Events")
+
+        if events.empty:
+            st.info("No production events available.")
+        else:
+            st.dataframe(events.head(15), width="stretch", hide_index=True)
+
+        if auto_refresh:
+            time.sleep(AUTO_REFRESH_SECONDS)
+            st.rerun()
 # ============================================================
 # PRODUCTION EVENTS
 # ============================================================
